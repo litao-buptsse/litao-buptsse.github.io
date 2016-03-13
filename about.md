@@ -36,6 +36,8 @@ permalink: /about/
 
 ## Open Source
 
+* [flume-hive-batch-sink](http://www.guaver.info/flume-hive-batch-sink): Flume Hive Batch Sink is a flume plugin to sink event to hive in a batch mode.
+
 * [bigdatakit](http://www.guaver.info/bigdatakit): BigdataKit is a tool kit to simplify your big data build process.
 
 * [spark-startup](http://www.guaver.info/spark-startup): Spark Startup - Build Your First Spark APP
