@@ -1,19 +1,50 @@
-# Welcome to Jekyll!
-#
-# This config file is meant for settings that affect your whole blog, values
-# which you are expected to set up once and rarely need to edit after that.
-# For technical reasons, this file is *NOT* reloaded automatically when you use
-# 'jekyll serve'. If you change this file, please restart the server process.
-
 # Site settings
-title: "Tao's Blog"
-email: litao.buptsse@gmail.com
-description: > # this means to ignore newlines until "baseurl:"
-  On The Way.
-baseurl: "" # the subpath of your site, e.g. /blog
-url: "http://www.guaver.info" # the base hostname & protocol for your site
-twitter_username: "litao_bupt"
-github_username:  "litao-buptsse"
+title: Tao Li's Blog
+description: "Tao Li's Blog"
+# baseurl: "/space-jekyll-template" # the subpath of your site
+url: "http://litao-buptsse.github.io"
+
+# User settings
+username: Tao Li
+user_title: Tao Li
+email: litao.buptsse@gmail.com.com
+twitter_username: litao_bupt
+github_username:  litao-buptsse
+gplus_username:  litao.buptsse
+disqus_username: litao.buptsse
 
 # Build settings
 markdown: kramdown
+highlighter: rouge
+permalink: /:title/
+
+
+# html minify
+compress_html:
+  clippings: all
+  comments: all
+  endings: []
+  profile: false
+
+# Links to include in menu navigation
+links:
+  - title: home
+    url: /
+  - title: my posts
+    url: /posts
+  - title: series
+    url: /series
+  - title: tags
+    url: /tags
+  - title: about me
+    url: /about
+# projects in header index
+projects:
+  - name: bigdatakit
+    url: https://github.com/litao-buptsse/bigdatakit
+  - name: hadoop-extras
+    url: https://github.com/litao-buptsse/hadoop-extras
+  - name: flume-hive-batch-sink
+    url: https://github.com/litao-buptsse/flume-hive-batch-sink
+# exclude my node related stuff
+exclude: ['package.json', 'src', 'node_modules']

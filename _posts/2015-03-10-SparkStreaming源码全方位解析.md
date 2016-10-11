@@ -11,16 +11,18 @@ categories: spark
 
 一个最简单的基于Spark Streaming的WordCount，代码如下：
 
-    object SocketWordCount extends App {
-      val conf = new SparkConf().
-          setMaster("local[*]").setAppName("WordCount")
-      val ssc = new StreamingContext(conf, Seconds(10))
-      val lines = ssc.socketTextStream("localhost", 9999)
-      val wordCounts = lines.flatMap(_.split(" ")).map((_, 1)).reduceByKey(_ + _)
-      wordCounts.print
-      ssc.start
-      ssc.awaitTermination
-    }
+~~~scala
+object SocketWordCount extends App {
+  val conf = new SparkConf().
+      setMaster("local[*]").setAppName("WordCount")
+  val ssc = new StreamingContext(conf, Seconds(10))
+  val lines = ssc.socketTextStream("localhost", 9999)
+  val wordCounts = lines.flatMap(_.split(" ")).map((_, 1)).reduceByKey(_ + _)
+  wordCounts.print
+  ssc.start
+  ssc.awaitTermination
+}
+~~~
 
 这个WordCount小程序很简单。首先创建一个SparkContext对象（与创建SparkContext不同，需要指定一个时间间隔）；然后通过ssc.socketTextStream创建InputDStream，然后对DStream进行各种transformation，调用print将结果输出；最后调用ssc.start启动程序即可。
 
@@ -60,44 +62,52 @@ Spark Core运算的基本单位是RDD，而Spark Streaming则是在***DStream***
 
 首先我们看下***flatMap***函数实现：
 
-    def flatMap[U: ClassTag](flatMapFunc: T => Traversable[U]): DStream[U] = {
-      new FlatMappedDStream(this, context.sparkContext.clean(flatMapFunc))
-      }
+~~~scala
+def flatMap[U: ClassTag](flatMapFunc: T => Traversable[U]): DStream[U] = {
+  new FlatMappedDStream(this, context.sparkContext.clean(flatMapFunc))
+}
+~~~
 
 很简单，返回了一个FlatMappedDStream。FlatMappedDStream实现也很简单，分别实现了slideDuration、dependencies、compute这三个函数。
 
-    override def dependencies = List(parent)
-    override def slideDuration: Duration = parent.slideDuration
-    override def compute(validTime: Time): Option[RDD[U]] = {
-     parent.getOrCompute(validTime).map(_.flatMap(flatMapFunc))
-    }
+~~~scala
+override def dependencies = List(parent)
+override def slideDuration: Duration = parent.slideDuration
+override def compute(validTime: Time): Option[RDD[U]] = {
+ parent.getOrCompute(validTime).map(_.flatMap(flatMapFunc))
+}
+~~~
 
 通过Compute函数，可见其会调用getOrCompute，获取parent DStream在某个时间点的RDD，然后对RDD信息转换，生成新的RDD。
 
 接下来，我们再来看下***print***函数的实现：
 
-    def print() {
-      def foreachFunc = (rdd: RDD[T], time: Time) => {
-        val first11 = rdd.take(11)
-        first11.take(10).foreach(println)
-      }
-      new ForEachDStream(this, context.sparkContext.clean(foreachFunc)).register()
-    }
+~~~scala
+def print() {
+  def foreachFunc = (rdd: RDD[T], time: Time) => {
+    val first11 = rdd.take(11)
+    first11.take(10).foreach(println)
+  }
+  new ForEachDStream(this, context.sparkContext.clean(foreachFunc)).register()
+}
+~~~
 
 print()最后新建并返回了一个ForEachDStream，而所有output operation均是如此，我们再来看下ForEachDStream的实现：
 
-    override def compute(validTime: Time): Option[RDD[Unit]] = None
-    override def generateJob(time: Time): Option[Job] = {
-      parent.getOrCompute(time) match {
-        case Some(rdd) =>
-          val jobFunc = () => {
-            ssc.sparkContext.setCallSite(creationSite)
-            foreachFunc(rdd, time)
-          }
-          Some(new Job(time, jobFunc))
-        case None => None
+~~~scala
+override def compute(validTime: Time): Option[RDD[Unit]] = None
+override def generateJob(time: Time): Option[Job] = {
+  parent.getOrCompute(time) match {
+    case Some(rdd) =>
+      val jobFunc = () => {
+        ssc.sparkContext.setCallSite(creationSite)
+        foreachFunc(rdd, time)
       }
-    }
+      Some(new Job(time, jobFunc))
+    case None => None
+  }
+}
+~~~
 
 其compute函数返回None，但是多了一个generateJob函数，生成new Job(time, jobFunc)对象，而Job之后会被调度。
 
@@ -130,7 +140,7 @@ ReceiverTracker启动后，会创建***ReceiverTrackerActor***，响应RegisterR
 * ***startReceiver()***由ReceiverSupervisor基类实现
   * 主要是调用***receiver.onStart()***，终于启动receiver了！！！
   * 然后调用ReceiverSupervisorImpl的onReceiverStart()，即为向ReceiverTrackerActor发送***RegisterReceiver***消息，将receiver加入元信息receiverInfo中。
-  
+
 ***至此，Receiver的启动过程完毕！！！***
 
 ## ReceiverTracker源码分析(二) 外部数据读取
@@ -138,16 +148,15 @@ ReceiverTracker启动后，会创建***ReceiverTrackerActor***，响应RegisterR
 数据的读入由receiver触发，receiver启动后会读取外部数据源的消息，有两种方法将其存储：
 
 * 调用***store(dataItem: T)***，存储单条消息
-  * 最终调用receiver对应的ReceiverSupervisorImpl的pushSingle(dataItem)方法
-  * pushSingle调用blockGenerator.addData(data)，将消息写入到
-blockGenerator的currentBuffer中。（放入currentBuffer之前会有一个流控函数，配置参数spark.streaming.receiver.maxRate）
-  * 上节讲到会启动blockGenerator。
+  *   最终调用receiver对应的ReceiverSupervisorImpl的pushSingle(dataItem)方法
+  *   pushSingle调用blockGenerator.addData(data)，将消息写入到blockGenerator的currentBuffer中。（放入currentBuffer之前会有一个流控函数，配置参数spark.streaming.receiver.maxRate）
+  *   上节讲到会启动blockGenerator。
       1. 会定时启动updateCurrentBuffer函数），将currentBuffer生成Block，放入blocksForPushing队列。（spark.streaming.blockInterval，默认200毫秒）
       2. 启动blockPushingThread线程，获取blocksForPushing队列中的blocks，并调用pushAndReportBlock方法。（调用比较曲折，先调用listener.onPushBlock，再调用ReceiverSupervisorImpl的pushArrayBuffer，最后再调用ReceiverSupervisorImpl的pushAndReportBlock）
 * 调用store(dataBuffer: ArrayBuffer[T])，消息批量存储
   * 会调用receiver对应的ReceiverSupervisorImpl的pushArrayBuffer方法
   * 最后直接调用pushAndReportBlock(ArrayBufferBlock(arrayBuffer), metadataOption, blockIdOption)方法
-  
+
 可见使用store(dataItem: T)***无需自己生成Block***，且有自动流控措施，但是当receiver挂掉的时候currentBuffer中的messages和blocksForPushing中的blocks均有可能会丢失。所以Unreliable Receivers可以使用，而对于Reliable Receivers，必须使用store(dataBuffer: ArrayBuffer[T])。详见官网 [Custom Receiver Guide](http://spark.apache.org/docs/latest/streaming-custom-receivers.html)
 
 最后再来说一说***pushAndReportBlock***方法：
@@ -169,12 +178,12 @@ OK，来看看GenerateJobs做了什么：
 * receiverTracker.allocateBlocksToBatch(time)  // 从streamIdToUnallocatedBlockQueues中获取这个batchDuration的所有streamId对应Blocks，加入到timeToAllocatedBlocks(batchTime) = allocatedBlocks
 * val jobs = graph.generateJobs(time)  // 生成这个batchDuration内所有的jobs
   * 遍历所有的outputStreams，分别调用其generateJob(time)方法，生成job
-* val receivedBlockInfos = jobScheduler.receiverTracker.getBlocksOfBatch(time)	// 获取timeToAllocatedBlocks(batchTime)对应的所有blocks
+  * val receivedBlockInfos = jobScheduler.receiverTracker.getBlocksOfBatch(time)// 获取timeToAllocatedBlocks(batchTime)对应的所有blocks
 * jobScheduler.submitJobSet(JobSet(time, jobs, receivedBlockInfos))  // 提交JobSet
   * 遍历JobSet中的每个job，讲new JobHandler(job)加入线程池jobExecutor执行（线程池大小：spark.streaming.concurrentJobs，默认为1）
   * JobHandler开始执行时，首先向JobGeneratorActor发送JobStarted消息，然后调用job的run()方法，进而调用func()函数，及最后的foreachFunc()。foreachFunc最终将作用于这个batchDuration的outputStream对应的RDD上，***进而产生Spark的任务！！！***
   * 执行完毕后，向JobGeneratorActor发送JobCompleted消息。
-  
+
 ***至此，Job调度过程完毕！！！***
 
 ## 总结：Spark Streaming与Spark Core的联系

@@ -59,26 +59,28 @@ spark-jobserver实现没有问题，那会不会是spark的问题？再去看了
 
 比如看下SparkContext和HiveContext两个对象的实例化的时机，SparkContext只有spark-jobserver在初始时实例化一次，而HiveContext在每次提交任务时都会通过new HiveContext(sc)新建多次。
 
-    object WAPRealtimeSparkClient extends SparkJob {
-      override def runJob(sc: SparkContext, config: Config): Any = {
-        val time = config.getString("time")
-        new WAPRealtimeRunner(sc, time).call
-      }
-      
-      override def validate(sc: SparkContext, config: Config): SparkJobValidation = {
-        Try(config.getString("time"))
-          .map(_ => SparkJobValid)
-          .getOrElse(SparkJobInvalid("No time config param"))
-      }
-    }
-      
-    class WAPRealtimeRunner(@transient sc: SparkContext, time: String)
-      extends CallableWithKillable[Int] with Serializable {
-      override def call(): Int = {
-        val sqlContext = new HiveContext(sc)
-        ......
-      }
-    }
+~~~scala
+object WAPRealtimeSparkClient extends SparkJob {
+  override def runJob(sc: SparkContext, config: Config): Any = {
+    val time = config.getString("time")
+    new WAPRealtimeRunner(sc, time).call
+  }
+  
+  override def validate(sc: SparkContext, config: Config): SparkJobValidation = {
+    Try(config.getString("time"))
+      .map(_ => SparkJobValid)
+      .getOrElse(SparkJobInvalid("No time config param"))
+  }
+}
+  
+class WAPRealtimeRunner(@transient sc: SparkContext, time: String)
+  extends CallableWithKillable[Int] with Serializable {
+  override def call(): Int = {
+    val sqlContext = new HiveContext(sc)
+    ......
+  }
+}
+~~~
 
 ## 尝试直接在spark-jobserver实例化HiveContext
 
@@ -92,24 +94,26 @@ spark-jobserver实现没有问题，那会不会是spark的问题？再去看了
 
 第二，app的代码需要实现SparkHiveJob接口，这时runJob和validate传入的参数直接就是hiveContext而非sc了。
 
-    object WAPRealtimeSparkClient extends SparkHiveJob {
-      override def runJob(hiveContext: HiveContext, config: Config): Any = {
-        val time = config.getString("time")
-        new WAPRealtimeRunner(hiveContext, time).call
-      }
-      
-      override def validate(hiveContext: HiveContext, config: Config): SparkJobValidation = {
-        Try(config.getString("time"))
-          .map(_ => SparkJobValid)
-          .getOrElse(SparkJobInvalid("No time config param"))
-      }
-    }
+~~~scala
+object WAPRealtimeSparkClient extends SparkHiveJob {
+  override def runJob(hiveContext: HiveContext, config: Config): Any = {
+    val time = config.getString("time")
+    new WAPRealtimeRunner(hiveContext, time).call
+  }
+  
+  override def validate(hiveContext: HiveContext, config: Config): SparkJobValidation = {
+    Try(config.getString("time"))
+      .map(_ => SparkJobValid)
+      .getOrElse(SparkJobInvalid("No time config param"))
+  }
+}
+~~~
 
 当然，为了编译通过，还需在sbt配置文件中，增加job-server-extras的依赖
 
-```
+~~~
 libraryDependencies += "spark.jobserver" %% "job-server-extras" % "0.5.2" % "provided"
-```
+~~~
 
 ## 编译打包，重新创建hiveContext，重新提交任务，classes不在增加！
 

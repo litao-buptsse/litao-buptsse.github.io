@@ -24,7 +24,7 @@ Producer端架构很简单，当客户端调用send()方法时，根据配置的
       -v：对应queue.put(msg) // 若queue满，阻塞
       +v：对应queue.offer(msg, timeout) // 若queue满，阻塞直至超时
     batch.num.messages：批量发送消息的数量，默认200
-    
+
 ## DefaultEventHandler基本流程
 
 Kafka Producer端默认使用的EventHandler实现是DefaultEventHandler，为消息发送的重点部分，我们首先看下handler()方法的基本流程：
@@ -38,7 +38,7 @@ Kafka Producer端默认使用的EventHandler实现是DefaultEventHandler，为�
               Update Metadata(when failed)
       Fail:
       	throw FailedToSendMessageException
-        
+
 首先序列化messages，然后进入一个重试的循环，发送消息至Kafka集群，若失败接着重试。有两个地方会更新Meta信息，一个为定时更新，一个在发送失败后更新。最后重试结束后仍失败，则抛出FailedToSendMessageException。
 
 一些可配置的参数如下：
@@ -46,7 +46,7 @@ Kafka Producer端默认使用的EventHandler实现是DefaultEventHandler，为�
     message.send.max.retries：消息发送最大重试次数，默认3
     topic.metadata.refresh.interval.ms：Meta信息更新周期，默认600000
     retry.backoff.ms：发送失败后，在更新Meta前Sleep的时间（这段时间Kafka集群可能在进行leader选举等操作，需sleep一段时间），默认100
-    
+
 ## 消息序列化
 
 serialize()方法的作用为将Seq[KeyedMessage[K,V]]转换为Seq[KeyedMessage[K,Message]]，其实主要就是用Message类将value进行封装为ByteBuffer。Message各个字节的含义如下：
@@ -73,28 +73,30 @@ ProducerPool含有一个syncProducers: new HashMap[Int, SyncProducer]，所有to
 
 我们首先看下消息发送的基本流程：
 
-    step-1: message format convert, Seq[KeyedMessage[K,Message] => Map[Int,Map[TopicAndPartition,ByteBufferMessageSet]]
-    step-2: for((brokerId, messageSetPerBroker)  buffer.putShort(requestId)
-          case None =>
-        }
-        request.writeTo(buffer)
-        buffer.rewind()
-      }
-          
-      def writeCompletely(channel: GatheringByteChannel): Int = {
-        var totalWritten = 0
-        while(!complete)
-        totalWritten += writeTo(channel)
-        totalWritten
-      }
-      
-      def writeTo(channel: GatheringByteChannel): Int = {
-        var written = channel.write(Array(sizeBuffer, buffer))
-        if(!buffer.hasRemaining)
-          complete = true    
-        written.asInstanceOf[Int]
-      }
+~~~scala
+step-1: message format convert, Seq[KeyedMessage[K,Message] => Map[Int,Map[TopicAndPartition,ByteBufferMessageSet]]
+step-2: for((brokerId, messageSetPerBroker)  buffer.putShort(requestId)
+      case None =>
     }
+    request.writeTo(buffer)
+    buffer.rewind()
+  }
+      
+  def writeCompletely(channel: GatheringByteChannel): Int = {
+    var totalWritten = 0
+    while(!complete)
+    totalWritten += writeTo(channel)
+    totalWritten
+  }
+  
+  def writeTo(channel: GatheringByteChannel): Int = {
+    var written = channel.write(Array(sizeBuffer, buffer))
+    if(!buffer.hasRemaining)
+      complete = true    
+    written.asInstanceOf[Int]
+  }
+}
+~~~
 
 BoundedByteBufferSend也很简单，传入需要发送的ByteBuffer。首先构造一个buffer，长度为request的sizeInBytes，若有requestId(short类型)，再加2个字节，调用request.writeTo(buffer)，用request的数据填充buffer；然后构造一个sizeBuffer，4个字节存入buffer的长度。调用writeCompletely时，循环调用writeTo，将sizeBuffer与buffer一并写入channel，直至buffer完全写完。
 
@@ -104,31 +106,35 @@ BoundedByteBufferReceive与BoundedByteBufferSend类似，在此不再赘述。
 
 ProducerRequest的构造：
 
-    class ProducerRequest(versionId: Short = ProducerRequest.CurrentVersion,
-                          correlationId: Int,
-                          clientId: String,
-                          requiredAcks: Short,
-                          ackTimeoutMs: Int,
-                          data: collection.mutable.Map[TopicAndPartition, ByteBufferMessageSet]) {
-      def writeTo(buffer: ByteBuffer) // 将data写入buffer
-    }
-      
-    object ProducerRequest {
-      // 用于从buffer构造ProducerRequest
-      def readFrom(buffer: ByteBuffer): ProducerRequest = {
-        ProducerRequest(...)
-      }
-    }
-    
+~~~scala
+class ProducerRequest(versionId: Short = ProducerRequest.CurrentVersion,
+                      correlationId: Int,
+                      clientId: String,
+                      requiredAcks: Short,
+                      ackTimeoutMs: Int,
+                      data: collection.mutable.Map[TopicAndPartition, ByteBufferMessageSet]) {
+  def writeTo(buffer: ByteBuffer) // 将data写入buffer
+}
+  
+object ProducerRequest {
+  // 用于从buffer构造ProducerRequest
+  def readFrom(buffer: ByteBuffer): ProducerRequest = {
+    ProducerRequest(...)
+  }
+}
+~~~
+
 ProducerResponse与ProducerRequest类似，在此不再赘述。
 
 最后我们再来总结下syncProducer.send(request)流程：
 
-    // 发送Request
-    send(brokerId, Map[TopicAndPartition,ByteBufferMessageSet]) => SyncProducer.send(ProducerRequest) =>BlockingChannel.send(request) => new BoundedByteBufferSend(request).writeCompletely
-    // 如果配置request.required.acks非0，则接受Reponse
-    val response = blockingChannel.receive() => new BoundedByteBufferReceive().readCompletely(readChannel)
-    ProducerResponse.readFrom(response.buffer)
+~~~scala
+// 发送Request
+send(brokerId, Map[TopicAndPartition,ByteBufferMessageSet]) => SyncProducer.send(ProducerRequest) =>BlockingChannel.send(request) => new BoundedByteBufferSend(request).writeCompletely
+// 如果配置request.required.acks非0，则接受Reponse
+val response = blockingChannel.receive() => new BoundedByteBufferReceive().readCompletely(readChannel)
+ProducerResponse.readFrom(response.buffer)
+~~~
 
 一些配置如下：
 
