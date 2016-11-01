@@ -25,7 +25,7 @@ categories: HDFS
 
 Token的结构如下：
 
-```
+~~~java
 Token:
 - byte[] identifier // BlockTokenIdentifier对象序列化
 - byte[] password
@@ -37,19 +37,19 @@ BlockTokenIdentifier:
 - String blockPoolId
 - long blockId
 - EnumSet<AccessMode> modes
-```
+~~~
 
 NameNode端生成Token代码调用过程：
 
-```
+~~~java
 NameNodeRpcServer.getBlockLocations() -> BlockManager.createLocatedBlocks() -> BlockManager.setBlockToken() -> BlockTokenSecretManager.generateToken() -> BlockTokenSecretManager.createPassword()
-```
+~~~
 
 DataNode端代验证Token代码调用过程：
 
-```
+~~~java
 DataXeceiver.readBlock() -> DataXeceiver.checkAccess() -> BlockTokenSecretManager.checkAccess() -> BlockTokenSecretManager.retrievePassword()
-```
+~~~
 
 ### 关于BlockKey
 
@@ -65,7 +65,7 @@ NameNode内部会有一个Monitor线程去定期更新BlockKey，并在DataNode�
 
 客户端所有的读写请求失败，DataNode端对每次读写请求报如下异常：
 
-```
+~~~
 org.apache.hadoop.security.token.SecretManager$InvalidToken: Can't re-compute password for block_token_identifier (expiryDate=1477730061461, keyId=989107790, userId=zhutg, blockPoolId=BP-715213703-10.141.46.46-1418959337587, blockId=2447256509, access modes=[READ]), since the required block key (keyID=989107790) doesn't exist.
         at org.apache.hadoop.hdfs.security.token.block.BlockTokenSecretManager.retrievePassword(BlockTokenSecretManager.java:382)
         at org.apache.hadoop.hdfs.security.token.block.BlockTokenSecretManager.checkAccess(BlockTokenSecretManager.java:302)
@@ -76,7 +76,7 @@ org.apache.hadoop.security.token.SecretManager$InvalidToken: Can't re-compute pa
         at org.apache.hadoop.hdfs.protocol.datatransfer.Receiver.processOp(Receiver.java:69)
         at org.apache.hadoop.hdfs.server.datanode.DataXceiver.run(DataXceiver.java:226)
         at java.lang.Thread.run(Thread.java:745)
-```
+~~~
 
 ### 故障分析
 
@@ -88,14 +88,14 @@ org.apache.hadoop.security.token.SecretManager$InvalidToken: Can't re-compute pa
 
 分析代码得知，NameNode在每次定期更BlockKey时会打印日志“Updating block keys”，但是在相应的时间点并没有打印相关日志，却抛出了如下ClassCastException异常，可见确实由于NameNode没有生成BlockKey所致。
 
-```
+~~~
 2016-10-29 06:00:02,008 ERROR org.apache.hadoop.hdfs.server.blockmanagement.HeartbeatManager: Exception while checking heartbeat
 java.lang.ClassCastException
-```
+~~~
 
 日志中只看到异常，但是没有看到堆栈信息，不便于我们找到具体出问题的代码。原因未Hadoop使用了commons-logging打日志，有个优化，在相同异常打印过多时，不会继续打印堆栈信息。故继续grep前几天的NameNode日志，直到找到第一次抛ClassCastException异常的地方，此处会把完整的堆栈信息打出来。
 
-```
+~~~
 2016-10-16 00:01:11,320 ERROR org.apache.hadoop.hdfs.server.blockmanagement.HeartbeatManager: Exception while checking heartbeat
 java.lang.ClassCastException: org.apache.hadoop.hdfs.server.blockmanagement.DatanodeDescriptor cannot be cast to java.lang.String
         at java.lang.String.compareTo(String.java:108)
@@ -106,13 +106,13 @@ java.lang.ClassCastException: org.apache.hadoop.hdfs.server.blockmanagement.Data
         at org.apache.hadoop.hdfs.server.blockmanagement.HeartbeatManager.heartbeatCheck(HeartbeatManager.java:316)
         at org.apache.hadoop.hdfs.server.blockmanagement.HeartbeatManager$Monitor.run(HeartbeatManager.java:337)
         at java.lang.Thread.run(Thread.java:745)
-```
+~~~
 
 通过查看对应的代码，发现BlockManager.removeBlocksAssociatedTo()中调用invalidateBlocks.remove()时因传入String，但实际传入的是DatanodeDescriptor，导致报ClassCastException异常，这部分原因有待继续跟踪。
 
 BlockManager.removeBlocksAssociatedTo()代码如下：
 
-```
+~~~java
 /** Remove the blocks associated to the given DatanodeStorageInfo. */
   void removeBlocksAssociatedTo(final DatanodeStorageInfo storageInfo) {
     assert namesystem.hasWriteLock();
@@ -126,11 +126,11 @@ BlockManager.removeBlocksAssociatedTo()代码如下：
     }
     namesystem.checkSafeMode();
   }
-```
+~~~
 
 部分DatanodeStorageInfo类代码：
 
-```
+~~~java
 class DatanodeStorageInfo {
   private final DatanodeDescriptor dn;  // 疑似与storageID错位了
   private final String storageID;
@@ -142,5 +142,4 @@ class DatanodeStorageInfo {
   private long remaining;
   private long blockPoolUsed;
 }
-```
-
+~~~
